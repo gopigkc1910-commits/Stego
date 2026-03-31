@@ -3,12 +3,12 @@ package com.stego.backend.service;
 import com.stego.backend.dto.request.LoginRequest;
 import com.stego.backend.dto.request.RegisterRequest;
 import com.stego.backend.dto.response.AuthResponse;
-import com.stego.backend.entity.RefreshToken;
-import com.stego.backend.entity.User;
+import com.stego.backend.entity.VerificationCode;
 import com.stego.backend.enums.Role;
 import com.stego.backend.exception.BadRequestException;
 import com.stego.backend.exception.RateLimitExceededException;
 import com.stego.backend.repository.UserRepository;
+import com.stego.backend.repository.VerificationCodeRepository;
 import com.stego.backend.security.JwtUtils;
 import com.stego.backend.security.UserDetailsImpl;
 import io.github.bucket4j.Bandwidth;
@@ -43,6 +43,12 @@ public class AuthService {
 
     @Autowired
     private RefreshTokenService refreshTokenService;
+
+    @Autowired
+    private OtpProvider otpProvider;
+
+    @Autowired
+    private VerificationCodeRepository verificationCodeRepository;
 
     // Rate limiting: per-email buckets (10 attempts per minute)
     private final Map<String, Bucket> loginBuckets = new ConcurrentHashMap<>();
@@ -83,6 +89,9 @@ public class AuthService {
 
         RefreshToken refreshToken = refreshTokenService.createRefreshToken(user.getId());
 
+        // Phase 4.5: Generate and store OTP with rate limiting
+        sendAndStoreOtp(user.getEmail(), "AUTH");
+
         return new AuthResponse(jwt, refreshToken.getToken(), user.getId(),
                 user.getName(), user.getEmail(), user.getRole().name());
     }
@@ -103,6 +112,9 @@ public class AuthService {
         UserDetailsImpl userDetails = (UserDetailsImpl) authentication.getPrincipal();
         RefreshToken refreshToken = refreshTokenService.createRefreshToken(userDetails.getId());
 
+        // Phase 4.5: Generate and store OTP with rate limiting
+        sendAndStoreOtp(userDetails.getEmail(), "AUTH");
+
         String role = userDetails.getAuthorities().iterator().next().getAuthority();
 
         return new AuthResponse(jwt, refreshToken.getToken(), userDetails.getId(),
@@ -119,5 +131,51 @@ public class AuthService {
                             user.getName(), user.getEmail(), user.getRole().name());
                 })
                 .orElseThrow(() -> new BadRequestException("Refresh token not found"));
+    }
+
+    private void sendAndStoreOtp(String email, String type) {
+        // Anti-abuse: limit to 3 OTPs every 15 minutes
+        long count = verificationCodeRepository.countByEmailAndCreatedAtAfter(email, LocalDateTime.now().minusMinutes(15));
+        if (count >= 3) {
+            throw new RateLimitExceededException("Too many OTP requests. Please wait a few minutes.");
+        }
+
+        String otp = String.valueOf((int) (Math.random() * 900000) + 100000);
+        
+        // Save to DB
+        verificationCodeRepository.deleteByEmailAndType(email, type);
+        VerificationCode vCode = VerificationCode.builder()
+                .email(email)
+                .code(otp)
+                .type(type)
+                .expiryTime(LocalDateTime.now().plusMinutes(10))
+                .build();
+        verificationCodeRepository.save(vCode);
+
+        // Send via pluggable provider
+        otpProvider.sendOtp(email, otp);
+    }
+
+    public void verifyOtp(String email, String code, String type) {
+        VerificationCode vCode = verificationCodeRepository.findTopByEmailAndTypeOrderByCreatedAtDesc(email, type)
+                .orElseThrow(() -> new BadRequestException("No verification code found"));
+
+        if (vCode.getExpiryTime().isBefore(LocalDateTime.now())) {
+            throw new BadRequestException("Verification code has expired");
+        }
+
+        if (!vCode.getCode().equals(code)) {
+            vCode.setAttemptsCount(vCode.getAttemptsCount() + 1);
+            verificationCodeRepository.save(vCode);
+            
+            if (vCode.getAttemptsCount() >= 5) {
+                verificationCodeRepository.delete(vCode);
+                throw new BadRequestException("Too many failed attempts. Please request a new code.");
+            }
+            throw new BadRequestException("Invalid verification code");
+        }
+
+        // Success - consume code
+        verificationCodeRepository.delete(vCode);
     }
 }

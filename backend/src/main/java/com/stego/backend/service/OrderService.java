@@ -10,8 +10,11 @@ import com.stego.backend.exception.BadRequestException;
 import com.stego.backend.exception.ResourceNotFoundException;
 import com.stego.backend.exception.UnauthorizedException;
 import com.stego.backend.repository.*;
+import com.stripe.exception.StripeException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,6 +26,8 @@ import java.util.stream.Collectors;
 
 @Service
 public class OrderService {
+
+    private static final Logger logger = LoggerFactory.getLogger(OrderService.class);
 
     @Autowired
     private OrderRepository orderRepository;
@@ -41,6 +46,12 @@ public class OrderService {
 
     @Autowired
     private SimpMessagingTemplate messagingTemplate;
+
+    @Autowired
+    private EstimationService estimationService;
+
+    @Autowired
+    private PaymentService paymentService;
 
     @Transactional
     public OrderResponse createOrder(Long userId, OrderRequest request) {
@@ -103,14 +114,14 @@ public class OrderService {
 
         order.setTotalAmount(total);
 
-        // Queue logic: heuristic-based estimated ready time
+        // Queue logic: heuristic-based wait time
         List<OrderStatus> activeStatuses = List.of(OrderStatus.PENDING, OrderStatus.ACCEPTED, OrderStatus.PREPARING);
         int queuePosition = orderRepository.findMaxQueuePosition(restaurant.getId(), activeStatuses) + 1;
-        long activeCount = orderRepository.countActiveOrders(restaurant.getId(), activeStatuses);
 
-        int estimatedMinutes = maxPrepTime + (int)(activeCount * 3); // Each order in queue adds ~3 min
+        // Smart Estimation: Prediction based on active queue + historical delay
+        LocalDateTime aiPredictedTime = estimationService.estimateReadyTime(restaurant, maxPrepTime);
         order.setQueuePosition(queuePosition);
-        order.setEstimatedReadyTime(LocalDateTime.now().plusMinutes(estimatedMinutes));
+        order.setEstimatedReadyTime(aiPredictedTime);
 
         order = orderRepository.save(order);
 
@@ -341,5 +352,60 @@ public class OrderService {
                 .items(items)
                 .createdAt(order.getCreatedAt())
                 .build();
+    }
+
+    public String createPaymentIntent(Long orderId, Long userId) throws StripeException {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order", "id", orderId));
+
+        if (!order.getUser().getId().equals(userId)) {
+            throw new UnauthorizedException("You can only pay for your own orders");
+        }
+
+        if (order.getStatus() == OrderStatus.CANCELLED || order.getStatus() == OrderStatus.COMPLETED) {
+            throw new BadRequestException("Cannot pay for a " + order.getStatus() + " order");
+        }
+
+        return paymentService.createPaymentIntent(order);
+    }
+
+    @Transactional
+    public void handlePaymentSuccess(Long orderId, String transactionId) {
+        Order order = orderRepository.findById(orderId).orElse(null);
+        if (order == null) return;
+
+        Payment payment = paymentRepository.findByOrderId(orderId).orElse(null);
+        if (payment != null) {
+            payment.setStatus(PaymentStatus.SUCCESS);
+            payment.setTransactionId(transactionId);
+            payment.setPaidAt(LocalDateTime.now());
+            paymentRepository.save(payment);
+            logger.info("Payment SUCCESS for order: {}", orderId);
+        }
+
+        // Auto-accept if payment is success (or keep PENDING for restaurant to manual accept)
+        // Here we keep it PENDING, but notify restaurant
+        OrderResponse response = mapToResponse(order, payment);
+        messagingTemplate.convertAndSend("/topic/restaurant/" + order.getRestaurant().getId() + "/orders", response);
+        messagingTemplate.convertAndSend("/topic/user/" + order.getUser().getId() + "/orders", response);
+    }
+
+    @Transactional
+    public void handlePaymentFailure(Long orderId) {
+        Order order = orderRepository.findById(orderId).orElse(null);
+        if (order == null) return;
+
+        Payment payment = paymentRepository.findByOrderId(orderId).orElse(null);
+        if (payment != null) {
+            payment.setStatus(PaymentStatus.FAILED);
+            paymentRepository.save(payment);
+            logger.error("Payment FAILED for order: {}", orderId);
+        }
+
+        order.setStatus(OrderStatus.CANCELLED);
+        orderRepository.save(order);
+
+        OrderResponse response = mapToResponse(order, payment);
+        messagingTemplate.convertAndSend("/topic/user/" + order.getUser().getId() + "/orders", response);
     }
 }

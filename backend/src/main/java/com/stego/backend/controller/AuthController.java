@@ -14,6 +14,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Map;
+
 @RestController
 @RequestMapping("/api/auth")
 @Tag(name = "Authentication", description = "Auth endpoints for register, login, and token refresh")
@@ -21,6 +23,15 @@ public class AuthController {
 
     @Autowired
     private AuthService authService;
+
+    @PostMapping("/verify-otp")
+    @Operation(summary = "Verify OTP code (Step 2 of login/register)")
+    public ResponseEntity<ApiResponse<String>> verifyOtp(@RequestBody Map<String, String> request) {
+        String email = request.get("email");
+        String code = request.get("code");
+        authService.verifyOtp(email, code, "AUTH");
+        return ResponseEntity.ok(ApiResponse.success("Verification successful", null));
+    }
 
     @PostMapping("/register")
     @Operation(summary = "Register a new user or restaurant owner")

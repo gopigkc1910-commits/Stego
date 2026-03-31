@@ -14,7 +14,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import com.stripe.exception.StripeException;
 
 @RestController
 @RequestMapping("/api/orders")
@@ -114,5 +117,17 @@ public class OrderController {
             @PathVariable Long id,
             @AuthenticationPrincipal UserDetailsImpl userDetails) {
         return ResponseEntity.ok(ApiResponse.success("Order completed", orderService.completeOrder(id, userDetails.getId())));
+    }
+
+    @PostMapping("/{id}/payment-intent")
+    @Operation(summary = "Create Stripe Payment Intent (User only)")
+    public ResponseEntity<ApiResponse<Map<String, String>>> createPaymentIntent(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetailsImpl userDetails) throws StripeException {
+        String clientSecret = orderService.createPaymentIntent(id, userDetails.getId());
+        return ResponseEntity.ok(ApiResponse.success(
+                "Payment intent created", 
+                Collections.singletonMap("clientSecret", clientSecret)
+        ));
     }
 }
