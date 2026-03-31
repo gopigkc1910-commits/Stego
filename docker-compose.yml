@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  # ── PostgreSQL Database ──
+  stego-db:
+    image: postgres:16-alpine
+    container_name: stego-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-stego}
+      POSTGRES_USER: ${DB_USER:-stego_admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-stego_secret_2024}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - stego_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-stego_admin} -d ${DB_NAME:-stego}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - stego-network
+
+  # ── Spring Boot Backend ──
+  stego-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: stego-backend
+    restart: unless-stopped
+    depends_on:
+      stego-db:
+        condition: service_healthy
+    environment:
+      DB_HOST: stego-db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-stego}
+      DB_USER: ${DB_USER:-stego_admin}
+      DB_PASSWORD: ${DB_PASSWORD:-stego_secret_2024}
+      JWT_SECRET: ${JWT_SECRET:-c3RlZ29TZWNyZXRLZXlGb3JKV1RUb2tlbkdlbmVyYXRpb25JbjIwMjQ=}
+      SERVER_PORT: 8080
+    ports:
+      - "8080:8080"
+    networks:
+      - stego-network
+
+  # ── Next.js Frontend ──
+  stego-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8080
+    container_name: stego-frontend
+    restart: unless-stopped
+    depends_on:
+      - stego-backend
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8080
+    networks:
+      - stego-network
+
+volumes:
+  stego_pgdata:
+    driver: local
+
+networks:
+  stego-network:
+    driver: bridge

@@ -1,0 +1,56 @@
+# Render.com deployment
+services:
+  # ── Backend API ──
+  - type: web
+    name: stego-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    envVars:
+      - key: DB_HOST
+        fromDatabase:
+          name: stego-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: stego-db
+          property: port
+      - key: DB_NAME
+        fromDatabase:
+          name: stego-db
+          property: database
+      - key: DB_USER
+        fromDatabase:
+          name: stego-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: stego-db
+          property: password
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SERVER_PORT
+        value: 8080
+      - key: SPRING_PROFILES_ACTIVE
+        value: prod
+    healthCheckPath: /actuator/health
+
+  # ── Frontend ──
+  - type: web
+    name: stego-frontend
+    runtime: docker
+    dockerfilePath: ./frontend/Dockerfile
+    dockerContext: ./frontend
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          name: stego-backend
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
+
+databases:
+  - name: stego-db
+    plan: starter
+    databaseName: stego
+    user: stego_admin
+    postgresMajorVersion: "16"

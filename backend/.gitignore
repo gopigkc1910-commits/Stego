@@ -1,0 +1,27 @@
+# ── Build ──
+target/
+!.mvn/wrapper/maven-wrapper.jar
+*.class
+*.jar
+*.war
+
+# ── IDE ──
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+*.swp
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+
+# ── Environment ──
+.env
+*.env.local
+
+# ── Logs ──
+*.log
+logs/

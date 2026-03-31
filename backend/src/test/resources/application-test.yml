@@ -1,0 +1,14 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/stego_test
+    username: stego_admin
+    password: stego_secret_2024
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+
+app:
+  jwt:
+    secret: c3RlZ29TZWNyZXRLZXlGb3JKV1RUb2tlbkdlbmVyYXRpb25JbjIwMjQ=
+    expiration-ms: 900000
+    refresh-expiration-ms: 604800000

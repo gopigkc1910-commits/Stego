@@ -1,0 +1,37 @@
+# ── Build ──
+backend/target/
+frontend/.next/
+frontend/out/
+*.class
+*.jar
+*.war
+
+# ── Dependencies ──
+node_modules/
+backend/tools/
+
+# ── IDE ──
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+*.swp
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+
+# ── Environment ──
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ── Logs ──
+*.log
+logs/
+
+# ── Docker ──
+docker-compose.override.yml
